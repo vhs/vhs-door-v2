@@ -52,7 +52,7 @@ void setup()
   
   // give the Ethernet shield a second to initialize:
   Serial.println("Waiting for ethernet/DHCP to init...");
-  delay(60000);
+  delay(5000);
   Serial.println("Running...");
 }
 
