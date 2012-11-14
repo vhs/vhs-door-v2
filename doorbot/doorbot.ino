@@ -36,6 +36,10 @@ void setup()
 	while (!Serial)
 		; // wait for serial port to connect. Needed for Leonardo only
 
+	Serial.println();
+	Serial.println();
+	Serial.println();
+
 	// start the Ethernet connection:
 	Serial.println("Initializing Ethernet/DHCP...");
 	if (Ethernet.begin(mac) == 0)
@@ -79,7 +83,7 @@ char* ReadBytes(char* buffer, int numBytes)
 		*buffer++ = client.read();
 	return buffer;
 }
-
+/*
 bool IsMalformed(char* data, char** pHeader, char** pBody)
 {
 	// Check if there was no end of the header
@@ -103,7 +107,7 @@ bool IsMalformed(char* data, char** pHeader, char** pBody)
 	
 	return false;
 }
-
+*/
 int ReadServerResponse(char* pBuffer, int bufferSize, bool* pMalformed)
 {
 	bool malformed = *pMalformed;
@@ -136,14 +140,14 @@ bool ParseServerResponse(char* buffer, bool* pMalformed)
 	bool result = false;
 	bool malformed = *pMalformed;
 
-	char* header = NULL;
+	/*char* header = NULL;
 	char* body = NULL;
 	if (!malformed)
-		malformed = IsMalformed(buffer, &header, &body);
+		malformed = IsMalformed(buffer, &header, &body);*/
 		
 	if (!malformed)
 	{
-		int headerSize = strlen(header);
+		/*int headerSize = strlen(header);
 		int bodySize = strlen(body);
 		
 		aJsonObject* root = aJson.parse(body);
@@ -161,7 +165,9 @@ bool ParseServerResponse(char* buffer, bool* pMalformed)
 			malformed = true;
 		}
 		
-		aJson.deleteItem(root);
+		aJson.deleteItem(root);*/
+
+		result = true;
 	}
 	
 	*pMalformed = malformed;
@@ -172,16 +178,17 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 {
 	bool result = false;
 	
-	Serial.println("Waiting for ethernet client to be ready...");
-	while (!client)
-		;
-
-	Serial.print("Connecting to server... ");
+	Serial.println();
+	Serial.println("Connecting to server... ");
 
 	if (client.connect(server, 80))
 	{
-		Serial.println("connected.");
+		Serial.println("...connected.");
 		
+		Serial.println("Waiting for ethernet client to be ready...");
+		while (!client)
+			;
+  
 		// Make a HTTP GET request with the status of the API
 		SendAPIGETRequest(apiKey, apiValue);
 
@@ -216,7 +223,7 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 	} 
 	else
 	{
-		Serial.println("connection failed.");
+		Serial.println("...connection failed.");
 	}
 
 	Serial.println("Disconnecting.");
