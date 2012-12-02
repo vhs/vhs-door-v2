@@ -8,19 +8,26 @@
 
  */
 
+//#define ENABLE_VALIDATION
+
 #include <SPI.h>
 #include <Ethernet.h>
+#if defined(ENABLE_VALIDATION)
 #include <aJSON.h>
+#endif
+#include <Debouncer.h>
 
 
 const int kDoorPin = 7;
+const unsigned int kDoorSampleRateInMS = 100;
 // const int kFooPin = 2;	// int0 = pin2, int1 = pin3 (on most Arduinos...)
 const char* kHostName = "api.hackspace.ca";
 IPAddress server(108,171,189,39);
 
 // MAC address to use for the Ethernet shield.
 // Newer Ethernet shields have a MAC address printed on a sticker on the shield, otherwise this is arbitrary (should be unique though)
-byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEB, 0xDA, 0xED };
+//byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEB, 0xDA, 0xED };
+byte mac[] = { 0x90, 0xA2, 0xDA, 0x00, 0x95, 0xF7 };
 
 
 EthernetClient client;
@@ -28,6 +35,9 @@ int DoorState = -1;
 // int FooVal = -2;
 // int FooState = -1;
 // ...
+
+Debouncer DoorDebouncer(kDoorPin, kDoorSampleRateInMS);
+
 
 void setup()
 {
@@ -41,27 +51,29 @@ void setup()
 	Serial.println();
 
 	// start the Ethernet connection:
-	Serial.println("Initializing Ethernet/DHCP...");
-	if (Ethernet.begin(mac) == 0)
+	Serial.println(F("Initializing Ethernet/DHCP..."));
+	for (int retry=1; (Ethernet.begin(mac) == 0); retry++)
 	{
-		Serial.println("Failed to configure Ethernet using DHCP");
-		// no point in carrying on, so do nothing forevermore:
-		for(;;)
-			;
+		Serial.println(F("Failed to configure Ethernet using DHCP."));
+		
+		delay(10000);
+		Serial.print(F("Initializing Ethernet/DHCP (retry "));
+		Serial.print(retry);
+		Serial.println(F(")..."));
 	}
 
 	// give the Ethernet shield a second to initialize:
-	Serial.println("Waiting for ethernet/DHCP to init...");
+	Serial.println(F("Waiting for ethernet/DHCP to init..."));
 	delay(1000);
 	
-	Serial.print("IP address is: ");
+	Serial.print(F("IP address is: "));
 	Serial.println(Ethernet.localIP());
 	Serial.println();
 	
 	pinMode(kDoorPin, INPUT_PULLUP);
 	// attachInterrupt(0, OnFooChange, CHANGE);
 
-	Serial.println("Running...");
+	Serial.println(F("Running..."));
 	Serial.println();
 }
 
@@ -83,7 +95,8 @@ char* ReadBytes(char* buffer, int numBytes)
 		*buffer++ = client.read();
 	return buffer;
 }
-/*
+
+#if defined(ENABLE_VALIDATION)
 bool IsMalformed(char* data, char** pHeader, char** pBody)
 {
 	// Check if there was no end of the header
@@ -107,7 +120,8 @@ bool IsMalformed(char* data, char** pHeader, char** pBody)
 	
 	return false;
 }
-*/
+#endif
+
 int ReadServerResponse(char* pBuffer, int bufferSize, bool* pMalformed)
 {
 	bool malformed = *pMalformed;
@@ -119,7 +133,7 @@ int ReadServerResponse(char* pBuffer, int bufferSize, bool* pMalformed)
 		int bytesWaiting = client.available();
 		if ((bytesRead + bytesWaiting) > bufferSize)
 		{
-			Serial.println("Too much data was sent by the server; assuming an error occurred.");
+			Serial.println(F("Too much data was sent by the server; assuming an error occurred."));
 			malformed = true;
 			break;
 		}
@@ -140,14 +154,17 @@ bool ParseServerResponse(char* buffer, bool* pMalformed)
 	bool result = false;
 	bool malformed = *pMalformed;
 
-	/*char* header = NULL;
+#if defined(ENABLE_VALIDATION)
+	char* header = NULL;
 	char* body = NULL;
 	if (!malformed)
-		malformed = IsMalformed(buffer, &header, &body);*/
+		malformed = IsMalformed(buffer, &header, &body);
+#endif
 		
 	if (!malformed)
 	{
-		/*int headerSize = strlen(header);
+#if defined(ENABLE_VALIDATION)
+		int headerSize = strlen(header);
 		int bodySize = strlen(body);
 		
 		aJsonObject* root = aJson.parse(body);
@@ -165,7 +182,8 @@ bool ParseServerResponse(char* buffer, bool* pMalformed)
 			malformed = true;
 		}
 		
-		aJson.deleteItem(root);*/
+		aJson.deleteItem(root);
+#endif
 
 		result = true;
 	}
@@ -179,13 +197,13 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 	bool result = false;
 	
 	Serial.println();
-	Serial.println("Connecting to server... ");
+	Serial.println(F("Connecting to server... "));
 
 	if (client.connect(server, 80))
 	{
-		Serial.println("...connected.");
+		Serial.println(F("...connected."));
 		
-		Serial.println("Waiting for ethernet client to be ready...");
+		Serial.println(F("Waiting for ethernet client to be ready..."));
 		while (!client)
 			;
   
@@ -204,29 +222,29 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 			if (ParseServerResponse(buffer, &malformed))
 			{
 				// API server update was successful!
-				Serial.println("Server successully updated.");
+				Serial.println(F("Server successully updated."));
 				
 				result = true;
 			}
 			else
 			{
 				if (malformed)
-					Serial.println("Server update failed: server error or malformed data was read. Trying again...");
+					Serial.println(F("Server update failed: server error or malformed data was read. Trying again..."));
 				else
-					Serial.println("Server update failed: server response status was invalid or indicated failure. Trying again...");
+					Serial.println(F("Server update failed: server response status was invalid or indicated failure. Trying again..."));
 			}
 		}
 		else
 		{
-			Serial.println("Server update failed: no data was read. Trying again...");
+			Serial.println(F("Server update failed: no data was read. Trying again..."));
 		}
 	} 
 	else
 	{
-		Serial.println("...connection failed.");
+		Serial.println(F("...connection failed."));
 	}
 
-	Serial.println("Disconnecting.");
+	Serial.println(F("Disconnecting."));
 	client.stop();
 	
 	return result;
@@ -234,32 +252,32 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 
 bool MaintainDHCPLease()
 {
-	Serial.print("Maintaining DHCP lease... ");
+	Serial.print(F("Maintaining DHCP lease... "));
 	int maintainResult = Ethernet.maintain();
 	switch (maintainResult)
 	{
 	case DHCP_CHECK_NONE:
-		Serial.println("nothing to do.");
+		Serial.println(F("nothing to do."));
 		break;
 		
 	case DHCP_CHECK_RENEW_OK:
-		Serial.println("successfully renewed.");
+		Serial.println(F("successfully renewed."));
 		break;
 	case DHCP_CHECK_REBIND_OK:
-		Serial.println("successfully rebound.");
+		Serial.println(F("successfully rebound."));
 		break;
 		
 	case DHCP_CHECK_RENEW_FAIL:
-		Serial.println("renew failed. Trying again...");
+		Serial.println(F("renew failed. Trying again..."));
 		break;
 	case DHCP_CHECK_REBIND_FAIL:
-		Serial.println("rebind failed. Trying again...");
+		Serial.println(F("rebind failed. Trying again..."));
 		break;
 	};
 	
 	if ((maintainResult == DHCP_CHECK_RENEW_OK) || (maintainResult == DHCP_CHECK_REBIND_OK))
 	{
-		Serial.print("IP address is: ");
+		Serial.print(F("IP address is: "));
 		Serial.println(Ethernet.localIP());
 		Serial.println();
 	}
@@ -284,7 +302,9 @@ void loop()
 		// There's only 2 hw interrupt pins though, so avoid them if possible so they can be
 		// used for other purposes in the future.
 		
-		doorVal = digitalRead(kDoorPin);
+                DoorDebouncer.Update();
+                if (DoorDebouncer.IsStable())
+		  doorVal = DoorDebouncer.GetValue();
 		// ...
 	} while ((doorVal == DoorState) /* && (FooVal == FooState) ... */);
 	
@@ -299,12 +319,12 @@ void loop()
 			char* apiValue;
 			if (doorVal != 0)
 			{
-				Serial.println("Space is OPEN!");
+				Serial.println(F("Space is OPEN!"));
 				apiValue = "open";
 			}
 			else
 			{
-				Serial.println("Space is CLOSED!");
+				Serial.println(F("Space is CLOSED!"));
 				apiValue = "closed";
 			}
 			
@@ -325,8 +345,6 @@ void loop()
 	}
 	
 	//
-	// Wait a bit before checking the status again
-	delay(1000);
 	Serial.println();
 	Serial.println();
 	Serial.println();
