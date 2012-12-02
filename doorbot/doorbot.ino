@@ -26,8 +26,7 @@ IPAddress server(108,171,189,39);
 
 // MAC address to use for the Ethernet shield.
 // Newer Ethernet shields have a MAC address printed on a sticker on the shield, otherwise this is arbitrary (should be unique though)
-//byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEB, 0xDA, 0xED };
-byte mac[] = { 0x90, 0xA2, 0xDA, 0x00, 0x95, 0xF7 };
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEB, 0xDA, 0xED };
 
 
 EthernetClient client;
