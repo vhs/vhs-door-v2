@@ -8,13 +8,14 @@
 
  */
 
-//#define ENABLE_VALIDATION
+#define ENABLE_VALIDATION
 
 #include <SPI.h>
 #include <Ethernet.h>
 #if defined(ENABLE_VALIDATION)
 #include <aJSON.h>
 #endif
+#include <MemoryFree.h>
 #include <Debouncer.h>
 
 
@@ -22,6 +23,7 @@ const int kDoorPin = 7;
 const unsigned int kDoorSampleRateInMS = 100;
 // const int kFooPin = 2;	// int0 = pin2, int1 = pin3 (on most Arduinos...)
 const char* kHostName = "api.hackspace.ca";
+const char* kAPIKey = "monkey";
 IPAddress server(108,171,189,39);
 
 // MAC address to use for the Ethernet shield.
@@ -48,14 +50,18 @@ void setup()
 	Serial.println();
 	Serial.println();
 	Serial.println();
+	
+	Serial.println(F("---- VHS API ----"));
+	printMemoryStats();
 
 	// start the Ethernet connection:
 	Serial.println(F("Initializing Ethernet/DHCP..."));
 	for (int retry=1; (Ethernet.begin(mac) == 0); retry++)
 	{
-		Serial.println(F("Failed to configure Ethernet using DHCP."));
-		
+		Serial.println(F("Failed to configure Ethernet using DHCP. Retrying in 10 seconds..."));
 		delay(10000);
+
+		Serial.println();
 		Serial.print(F("Initializing Ethernet/DHCP (retry "));
 		Serial.print(retry);
 		Serial.println(F(")..."));
@@ -76,10 +82,19 @@ void setup()
 	Serial.println();
 }
 
+void printMemoryStats()
+{
+	Serial.print(F("Available memory: "));
+	Serial.print(freeMemory());
+	Serial.println(F(" bytes."));
+	Serial.println();
+	Serial.flush();
+}
+
 void SendAPIGETRequest(const char* key, const char* value)
 {
 	char getCommand[128];
-	sprintf(getCommand, "GET /s/vhs/data/%s/update?value=%s&apikey=monkey HTTP/1.1", key, value);
+	sprintf(getCommand, "GET /s/vhs/data/%s/update?value=%s&apikey=%s HTTP/1.1", key, value, kAPIKey);
 	char hostCommand[128];
 	sprintf(hostCommand, "Host: %s", kHostName);
 
@@ -88,38 +103,42 @@ void SendAPIGETRequest(const char* key, const char* value)
 	client.println();
 }
 
+bool ReadLine(char* buffer, int bufferSize)
+{
+	bool result = false;
+	int bytesRead = 0;
+
+	while (client.connected() && (bytesRead < (bufferSize-1)))
+	{
+		if (client.available() > 0)
+		{
+			char c = client.read();
+			if (c == '\n')
+			{
+				result = true;
+				break;
+			}
+			else if (c == '\r')
+			{
+				continue;
+			}
+			
+			buffer[bytesRead++] = c;
+		}
+	}
+		
+	buffer[bytesRead] = '\0';
+	
+	return result;
+}
+
+#if defined(ENABLE_VALIDATION)
 char* ReadBytes(char* buffer, int numBytes)
 {
 	for (int i=0; i<numBytes; i++)
 		*buffer++ = client.read();
 	return buffer;
 }
-
-#if defined(ENABLE_VALIDATION)
-bool IsMalformed(char* data, char** pHeader, char** pBody)
-{
-	// Check if there was no end of the header
-	char* header = data;
-	char* body = strstr(header, "\r\n\r\n");
-	*pHeader = header;
-	*pBody = body;
-	if (body == NULL)
-		return true;
-	
-	// NULL terminate the header and advance the body to where it actually begins
-	*body++ = '\0';
-	*body++ = '\0';
-	*body++ = '\0';
-	*body++ = '\0';
-	
-	*pBody = body;
-	
-	if (strstr(header, "HTTP/1.1 200 OK") == NULL)
-		return true;
-	
-	return false;
-}
-#endif
 
 int ReadServerResponse(char* pBuffer, int bufferSize, bool* pMalformed)
 {
@@ -130,7 +149,7 @@ int ReadServerResponse(char* pBuffer, int bufferSize, bool* pMalformed)
 	{
 		// if there are incoming bytes available from the server, read them
 		int bytesWaiting = client.available();
-		if ((bytesRead + bytesWaiting) > bufferSize)
+		if ((bytesRead + bytesWaiting) > (bufferSize-1))
 		{
 			Serial.println(F("Too much data was sent by the server; assuming an error occurred."));
 			malformed = true;
@@ -147,55 +166,38 @@ int ReadServerResponse(char* pBuffer, int bufferSize, bool* pMalformed)
 	*pMalformed = malformed;
 	return bytesRead;
 }
+#endif
 
-bool ParseServerResponse(char* buffer, bool* pMalformed)
+bool ReadResponseHeader(int* pDataSize)
 {
-	bool result = false;
-	bool malformed = *pMalformed;
-
-#if defined(ENABLE_VALIDATION)
-	char* header = NULL;
-	char* body = NULL;
-	if (!malformed)
-		malformed = IsMalformed(buffer, &header, &body);
-#endif
-		
-	if (!malformed)
-	{
-#if defined(ENABLE_VALIDATION)
-		int headerSize = strlen(header);
-		int bodySize = strlen(body);
-		
-		aJsonObject* root = aJson.parse(body);
-		
-		if (root != NULL)
-		{
-			aJsonObject* status = aJson.getObjectItem(root, "status");
-			if ((status == NULL) || (status->type != aJson_String) || (strcmp(status->valuestring, "OK") != 0))
-				malformed = true;
-			else
-				result = true;
-		}
-		else
-		{
-			malformed = true;
-		}
-		
-		aJson.deleteItem(root);
-#endif
-
-		result = true;
-	}
+	*pDataSize = 0;
 	
-	*pMalformed = malformed;
-	return result;
+	char lineBuffer[64];
+	
+	ReadLine(lineBuffer, sizeof(lineBuffer));
+	if (strcmp(lineBuffer, "HTTP/1.1 200 OK") != 0)
+		return false;
+	
+	const char* kContentLength = "Content-Length: ";
+	
+	int dataSize = 0;
+	while ((ReadLine(lineBuffer, sizeof(lineBuffer)) || 1) && (*lineBuffer != '\0'))
+	{
+		if (strstr(lineBuffer, kContentLength) == lineBuffer)
+		{
+			const char* pNum = lineBuffer + strlen(kContentLength);
+			dataSize = atoi(pNum);
+		}
+	}
+
+	*pDataSize = dataSize;
+	return (dataSize > 0);
 }
 
 bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 {
 	bool result = false;
 	
-	Serial.println();
 	Serial.println(F("Connecting to server... "));
 
 	if (client.connect(server, 80))
@@ -207,35 +209,94 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 			;
   
 		// Make a HTTP GET request with the status of the API
+		Serial.println(F("Sending HTTP GET request to server..."));
 		SendAPIGETRequest(apiKey, apiValue);
 
 		// Read the servers response
-		bool malformed = false;
-		char buffer[512];
-		int bytesRead = ReadServerResponse(buffer, sizeof(buffer), &malformed);
-		
-		if (bytesRead > 0)
+		int dataSize = 0;
+		Serial.println(F("Reading response header..."));
+		if (ReadResponseHeader(&dataSize))
 		{
-			Serial.print(buffer);
-		
-			if (ParseServerResponse(buffer, &malformed))
+#if defined(ENABLE_VALIDATION)
+			// Guestimate of memory required to parse the servers response:
+			//     malloc(~128) + aJsonObject tree(~160)
+			const int upperLimitMemoryUse = (dataSize * 2) + (dataSize / 2);
+			bool outOfMemory = (freeMemory() <= upperLimitMemoryUse);
+			bool malformed = true;
+			
+			if (!outOfMemory)
+			{
+				Serial.print(F("Reading response body ("));
+				Serial.print(dataSize);
+				Serial.println(F(" bytes)..."));
+				bool bufferTooSmall = false;
+				char* buffer = (char*)malloc(dataSize+1);
+				int bytesRead = ReadServerResponse(buffer, dataSize+1, &bufferTooSmall);
+				
+				Serial.println(F("Parsing server response..."));
+				if (!bufferTooSmall)
+				{
+					if (bytesRead == dataSize)
+					{
+						aJsonObject* root = aJson.parse(buffer);
+						if (root != NULL)
+						{
+							aJsonObject* status = aJson.getObjectItem(root, "status");
+							if ((status != NULL) && (status->type == aJson_String))
+							{
+								malformed = false;
+								
+								if (strcmp(status->valuestring, "OK") == 0)
+									result = true;
+							}
+							
+							aJson.deleteItem(root);
+						}
+					}
+				}
+				
+				free(buffer);
+			}
+#else
+			const bool malformed = false;
+			const bool outOfMemory = false;
+			result = true;
+#endif
+			
+			if (result)
 			{
 				// API server update was successful!
-				Serial.println(F("Server successully updated."));
-				
-				result = true;
+				Serial.println(F("Server successully updated!"));
 			}
 			else
 			{
-				if (malformed)
-					Serial.println(F("Server update failed: server error or malformed data was read. Trying again..."));
+				if (outOfMemory)
+				{
+					Serial.print(F("Server update failed: out of memory. Data size: "));
+					Serial.print(dataSize);
+					Serial.print(F(" bytes, available memory: "));
+					Serial.print(freeMemory());
+					Serial.print(F(" bytes, expected upper bounds of memory use: "));
+					Serial.print(upperLimitMemoryUse);
+					Serial.println(F(" bytes). NOT trying again."));
+					Serial.flush();
+					
+					// We do NOT want to try again, as if we're OOM, that's unlikely to
+					// change and we'll just end up spamming the server.
+					result = true;
+				}
 				else
-					Serial.println(F("Server update failed: server response status was invalid or indicated failure. Trying again..."));
+				{
+					if (malformed)
+						Serial.println(F("Server update failed: server error or malformed data was read. Trying again..."));
+					else
+						Serial.println(F("Server update failed: server response status indicated failure. Trying again..."));
+				}
 			}
 		}
 		else
 		{
-			Serial.println(F("Server update failed: no data was read. Trying again..."));
+			Serial.println(F("Server update failed: invalid header. Trying again..."));
 		}
 	} 
 	else
@@ -278,9 +339,10 @@ bool MaintainDHCPLease()
 	{
 		Serial.print(F("IP address is: "));
 		Serial.println(Ethernet.localIP());
-		Serial.println();
 	}
 	
+	Serial.println();
+
 	bool leaseValid = (maintainResult != DHCP_CHECK_RENEW_FAIL) && (maintainResult != DHCP_CHECK_REBIND_FAIL);
 	return leaseValid;
 }
@@ -294,16 +356,16 @@ void OnFooChange()
 
 void loop()
 {
-	int doorVal;
+	int doorVal = DoorState;
 	do
 	{
 		// Note: Any changes with a short period (button presses, etc) should use interrupts.
 		// There's only 2 hw interrupt pins though, so avoid them if possible so they can be
 		// used for other purposes in the future.
 		
-                DoorDebouncer.Update();
-                if (DoorDebouncer.IsStable())
-		  doorVal = DoorDebouncer.GetValue();
+        DoorDebouncer.Update();
+        if (DoorDebouncer.IsStable())
+			doorVal = DoorDebouncer.GetValue();
 		// ...
 	} while ((doorVal == DoorState) /* && (FooVal == FooState) ... */);
 	
@@ -313,6 +375,8 @@ void loop()
 	// Don't attempt to update the server is the LAN connection is down
 	if (leaseValid)
 	{
+		printMemoryStats();
+	
 		if (doorVal != DoorState)
 		{
 			char* apiValue;
