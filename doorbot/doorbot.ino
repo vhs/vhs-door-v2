@@ -60,6 +60,8 @@ void setup()
 	{
 		Serial.println(F("Failed to configure Ethernet using DHCP. Retrying in 10 seconds..."));
 		delay(10000);
+		
+		printMemoryStats();
 
 		Serial.println();
 		Serial.print(F("Initializing Ethernet/DHCP (retry "));
@@ -77,6 +79,27 @@ void setup()
 	
 	pinMode(kDoorPin, INPUT_PULLUP);
 	// attachInterrupt(0, OnFooChange, CHANGE);
+	
+	Serial.println(F("Checking status of the door..."));
+	Serial.println();
+	char* currDoorState = NULL;
+	if (CallAPIServer("door", &currDoorState))
+	{
+		Serial.println();
+		Serial.print(F("Door is currently "));
+		Serial.print(currDoorState);
+		Serial.println(F("."));
+		
+		DoorState = (strcmp(currDoorState, "open") == 0) ? 1 : 0;
+		
+		free(currDoorState);
+	}
+	else
+	{
+		Serial.println();
+		Serial.println(F("Could not fetch current status of the door."));
+	}
+	Serial.println();
 
 	Serial.println(F("Running..."));
 	Serial.println();
@@ -84,6 +107,7 @@ void setup()
 
 void printMemoryStats()
 {
+	Serial.println();
 	Serial.print(F("Available memory: "));
 	Serial.print(freeMemory());
 	Serial.println(F(" bytes."));
@@ -94,7 +118,10 @@ void printMemoryStats()
 void SendAPIGETRequest(const char* key, const char* value)
 {
 	char getCommand[128];
-	sprintf(getCommand, "GET /s/vhs/data/%s/update?value=%s&apikey=%s HTTP/1.1", key, value, kAPIKey);
+	if (value != NULL)
+		sprintf(getCommand, "GET /s/vhs/data/%s/update?value=%s&apikey=%s HTTP/1.1", key, value, kAPIKey);
+	else
+		sprintf(getCommand, "GET /s/vhs/data/%s.json HTTP/1.1", key);
 	char hostCommand[128];
 	sprintf(hostCommand, "Host: %s", kHostName);
 
@@ -194,9 +221,17 @@ bool ReadResponseHeader(int* pDataSize)
 	return (dataSize > 0);
 }
 
-bool UpdateAPIServer(const char* apiKey, const char* apiValue)
+bool CallAPIServer(const char* apiKey, char* apiValue)
+{
+	return CallAPIServer(apiKey, &apiValue);
+}
+
+bool CallAPIServer(const char* apiKey, char** const pAPIValue)
 {
 	bool result = false;
+	
+	const char* apiValue = *pAPIValue;
+	bool isQuery = (apiValue == NULL); 
 	
 	Serial.println(F("Connecting to server... "));
 
@@ -241,13 +276,28 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 						aJsonObject* root = aJson.parse(buffer);
 						if (root != NULL)
 						{
-							aJsonObject* status = aJson.getObjectItem(root, "status");
-							if ((status != NULL) && (status->type == aJson_String))
+							if (!isQuery)
 							{
-								malformed = false;
-								
-								if (strcmp(status->valuestring, "OK") == 0)
+								aJsonObject* status = aJson.getObjectItem(root, "status");
+								if ((status != NULL) && (status->type == aJson_String))
+								{
+									malformed = false;
+									
+									if (strcmp(status->valuestring, "OK") == 0)
+										result = true;
+								}
+							}
+							else
+							{
+								aJsonObject* value = aJson.getObjectItem(root, "value");
+								if ((value != NULL) && (value->type == aJson_String))
+								{
+									malformed = false;
+									
+									*pAPIValue = strdup(value->valuestring);
+									
 									result = true;
+								}
 							}
 							
 							aJson.deleteItem(root);
@@ -266,13 +316,16 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 			if (result)
 			{
 				// API server update was successful!
-				Serial.println(F("Server successully updated!"));
+				if (!isQuery)
+					Serial.println(F("Server successully updated!"));
+				else
+					Serial.println(F("API value successfully fetched."));
 			}
 			else
 			{
 				if (outOfMemory)
 				{
-					Serial.print(F("Server update failed: out of memory. Data size: "));
+					Serial.print(F("Server API call failed: out of memory. Data size: "));
 					Serial.print(dataSize);
 					Serial.print(F(" bytes, available memory: "));
 					Serial.print(freeMemory());
@@ -288,15 +341,15 @@ bool UpdateAPIServer(const char* apiKey, const char* apiValue)
 				else
 				{
 					if (malformed)
-						Serial.println(F("Server update failed: server error or malformed data was read. Trying again..."));
+						Serial.println(F("Server API call failed: server error or malformed data was read. Trying again..."));
 					else
-						Serial.println(F("Server update failed: server response status indicated failure. Trying again..."));
+						Serial.println(F("Server API call failed: server response status indicated failure. Trying again..."));
 				}
 			}
 		}
 		else
 		{
-			Serial.println(F("Server update failed: invalid header. Trying again..."));
+			Serial.println(F("Server API call failed: invalid header. Trying again..."));
 		}
 	} 
 	else
@@ -391,7 +444,7 @@ void loop()
 				apiValue = "closed";
 			}
 			
-			if (UpdateAPIServer("door", apiValue))
+			if (CallAPIServer("door", apiValue))
 				DoorState = doorVal;
 		}
 
