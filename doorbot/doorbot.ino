@@ -22,7 +22,7 @@
 const int kDoorPin = 7;
 const unsigned int kDoorSampleRateInMS = 100;
 // const int kFooPin = 2;	// int0 = pin2, int1 = pin3 (on most Arduinos...)
-const char* kHostName = "api.hackspace.ca";
+const char* kHostName = "api.vanhack.ca";
 const char* kAPIKey = "monkey";
 IPAddress server(108,171,189,39);
 
